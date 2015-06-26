@@ -4,10 +4,9 @@
 
 using namespace bt;
 
-MsgBuf::MsgBuf(Comparator* cmp, Slab* slab)
-    : list_(Compare(cmp), slab),
-      slab_(slab),
-      cmp_(cmp),
+MsgBuf::MsgBuf(Slab* slab)
+    : slab_(slab),
+      list_(Compare(), slab),
       mutex_(),
       size_(0)
 {
@@ -67,7 +66,7 @@ void MsgBuf::insert(const Msg& msg)
         }
     }
     list_.insert(msg);
-    size_ += msg.size();
+    size_ += msg.size() + 8; //add string length for deserialize
     if(release)
         got.release();
 }
@@ -83,7 +82,7 @@ void MsgBuf::resize(size_t size)
     iter.seekToFirst();
 
     while(iter.valid()) {
-        size_ += iter.key().size();
+        size_ += iter.key().size() + 8; //add string length for deserialize
         iter.next();
     }
 }
@@ -115,9 +114,9 @@ bool MsgBuf::deserialize(Buffer& reader)
         return true;
 
     for(size_t i = 0; i < count; ++i) {
-        uint8_t type;
+        uint32_t type;
         Slice value;
-		type = reader.readInt8();
+		type = reader.readInt32();
 		std::string keyStr(reader.readString());
 		Slice key(keyStr);
         if(type == Put) {
@@ -127,7 +126,7 @@ bool MsgBuf::deserialize(Buffer& reader)
 
         Msg msg((MsgType)type, key, value);
         list_.insert(msg);
-        size_ += msg.size();
+        size_ += msg.size() + 8; // add string length
     }
 
     return true;
@@ -147,11 +146,14 @@ bool MsgBuf::serialize(Buffer& writer)
         Msg msg = iter.key();
         uint8_t type = msg.type();
 		
-		writer.appendInt8(type);
+		writer.appendInt32(type);
+		writer.appendInt32(msg.key().size());
 		writer.append(msg.key().data(), msg.key().size());
 
-        if(type == Put)
+        if(type == Put) {
+			writer.appendInt32(msg.key().size());
 			writer.append(msg.value().data(), msg.value().size());
+        }
 
         count--;
         iter.next();

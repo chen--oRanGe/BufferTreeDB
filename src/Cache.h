@@ -7,6 +7,7 @@
 #include "Mutex.h"
 #include "Options.h"
 #include "RWLock.h"
+#include "Buffer.h"
 
 namespace bt {
 
@@ -36,7 +37,8 @@ public:
     void flush();
 
 	void writeBack();
-	void flushDirtyNodes(std::vector<Node*>& dirtyNodes);
+	void flushDirtyNodes(std::map<nid_t, Node*>& dirtyNodes);
+	void evictFromMemory();
 
 private:
     Options opts_;
@@ -53,6 +55,8 @@ private:
     std::list<Node*> usedNodes_;
     RWLock lockNodes_;
 	Slab* slab_;
+	Buffer readBuf_;
+	MutexLock usedNodesLock_;
 };
 }
 #endif

@@ -3,7 +3,6 @@
 
 #include "Slice.h"
 #include "Options.h"
-#include "Comparator.h"
 
 namespace bt {
 class DB {

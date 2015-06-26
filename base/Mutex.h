@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include "Thread.h"
 
+/*
 #ifdef CHECK_PTHREAD_RETURN_VALUE
 
 #ifdef NDEBUG
@@ -27,6 +28,9 @@ __END_DECLS
         assert(errnum == 0); (void) errnum;})
 
 #endif // CHECK_PTHREAD_RETURN_VALUE
+*/
+
+#define MCHECK(ret) ret
 
 namespace bt
 {

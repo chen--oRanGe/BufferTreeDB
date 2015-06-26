@@ -386,7 +386,7 @@ void sleepMillisecond(unsigned int ms)
 
 struct tm timeToTm(time_t t)
 {
-	struct tm tt = { 0 };
+	struct tm tt = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	localtime_r(&t, &tt);
 	return tt;
 }

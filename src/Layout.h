@@ -14,8 +14,8 @@
 namespace bt
 {
 #define MAGIC 0x11223344
-#define DATA_PATH "/buffertree/data/data-"
-#define META_PATH "/buffertree/data/meta-"
+#define DATA_PATH "/buffertree/data/data_"
+#define META_PATH "/buffertree/data/meta_"
 
 struct Postion
 {
@@ -47,7 +47,7 @@ public:
 	bool loadMetadata(size_t len);
 	bool flushMetadata();
 	bool find(nid_t nid, Buffer& buf);
-	int write(std::vector<Node*>& nodes);
+	int write(std::map<nid_t, Node*>& dirtyNodes);
 	bool readFile(std::string& path, uint32_t offset, uint32_t size, Buffer& data);
 	bool writeFile(std::string& path, uint32_t offset, uint32_t size, Buffer& data);
 	nid_t getRootNid();
@@ -64,7 +64,6 @@ private:
 	std::string curPath_;
 	std::string metaPath_;
 	std::vector<Postion> metadata_;
-	Buffer readBuf_;
 	Buffer writeBuf_;
 	BufferTree* tree_;
 };

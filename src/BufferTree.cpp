@@ -19,6 +19,9 @@ BufferTree::BufferTree(const std::string& name, Options& opts,
       layout_(layout)
 {}
 
+BufferTree::~BufferTree()
+{}
+
 bool BufferTree::init()
 {
     cache_->tie(this, layout_);

@@ -1,11 +1,11 @@
-#include "Slab.h"
-#include "Options.h"
-#include "Logger.h"
-
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+
+#include "Slab.h"
+#include "Options.h"
+#include "Logger.h"
 
 #define SLAB_PAGE_MASK  3
 #define SLAB_PAGE        0
@@ -116,6 +116,14 @@ bool Slab::init(uint32_t slabSize)
     pages_->slab = (end_ - start_) / pageSize_;
 
 	return true;
+}
+
+bool Slab::clear()
+{
+	uint32_t slabSize = end_ - addr_;
+	LOGFMTI("Slab::clear slabSize: %u", slabSize);
+	free(addr_);
+	return init(slabSize);
 }
 
 void* Slab::alloc(uint32_t size)

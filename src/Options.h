@@ -1,6 +1,5 @@
 #ifndef __BT_OPRIONS_H
 #define __BT_OPRIONS_H
-#include "Comparator.h"
 
 namespace bt {
 
@@ -16,13 +15,11 @@ class Options
 public:
     Options()
     {
-        cmp = NULL;
-        maxNodeChildNum = 16;
-        maxNodeMsg = 16 * 1024; // 16K, 1 node at most 256K
+        maxNodeChildNum = 4; // 16 nodes
+        maxNodeMsg = 100; // 16K, 1 node at most 256K
         cacheLimitMem = 1 << 28; // 256M
         cacheDirtyNodeExpire = 1;
     }
-    Comparator* cmp;
 
     size_t maxNodeChildNum;
     size_t maxNodeMsg;

@@ -7,6 +7,7 @@
 
 #include <vector>
 #include <boost/noncopyable.hpp>
+#include "Logger.h"
 
 namespace bt {
 
@@ -30,6 +31,7 @@ public:
     size_t memUsage() const 
 	{ 
 		//return slab_.usage(); 
+		slab_->slabStat();
 		return 0;
 	}
 
@@ -48,7 +50,7 @@ public:
             void seekToMiddle();
             void seekToLast();
 
-        private:
+        //private:
             const SkipList* list_;
             Node* node_;
     };
@@ -91,7 +93,7 @@ SkipList<Key, Comparator>::newNode(const Key& key, size_t height)
 {
     size_t size = sizeof(Node) + sizeof(Node*) * (height - 1);
     char* allocPtr = (char*)slab_->alloc(size);
-
+	//LOGFMTI("SkipList<Key, Comparator>::newNode %p", allocPtr);
     return new (allocPtr) Node(key);
 }
 
@@ -149,7 +151,7 @@ inline void SkipList<Key, Comparator>::Iterator::seekToFirst()
 template<class Key, class Comparator>
 inline void SkipList<Key, Comparator>::Iterator::seekToMiddle()
 {
-    int middle = list_->count_ / 2; 
+    int middle = list_->count_ / 2;
 
     seekToFirst();
 
@@ -161,7 +163,7 @@ template<class Key, class Comparator>
 inline void SkipList<Key, Comparator>::Iterator::seekToLast()
 {
     Node* curr = list_->head_;
-    size_t level = list_->max_height_ - 1;
+    size_t level = list_->maxHeight_ - 1;
 
     while (true) {
         Node* next = curr->next(level);
@@ -244,10 +246,11 @@ SkipList<Key, Comparator>::findLessThan(const Key& key) const
     }
 }
 
+
 template<class Key, class Comparator>
 SkipList<Key, Comparator>::SkipList(Comparator cmp, Slab* slab)
         : slab_(slab), head_(newNode(Key(), kMaxHeight)),
-          maxHeight_(1), count_(0), 
+          maxHeight_(1), count_(0),
           compare_(cmp), seed_(time(NULL))
 {
     srand(seed_);
@@ -255,6 +258,7 @@ SkipList<Key, Comparator>::SkipList(Comparator cmp, Slab* slab)
     for (int i = 0; i < kMaxHeight; i++)
         head_->setNext(i, NULL);
 }
+
 
 template<class Key, class Comparator>
 void SkipList<Key, Comparator>::insert(const Key& key)
@@ -309,6 +313,9 @@ void SkipList<Key, Comparator>::erase(const Key& key)
         if (prev[i]->next(i) == curr)
             prev[i]->setNext(i, curr->next(i));
     }
+	
+	LOGFMTI("SkipList<Key, Comparator>::erase node %p", curr);
+	slab_->free((void*)curr);
 
     count_--;
 }
@@ -341,8 +348,19 @@ void SkipList<Key, Comparator>::resize(size_t size)
 template<class Key, class Comparator>
 void SkipList<Key, Comparator>::clear()
 {
-    //slab_.clear();
-    head_ = newNode(Key(), kMaxHeight);
+	
+    //slab_->clear();
+    Node* node = head_;
+	Node* next;
+	//LOGFMTI("SkipList<Key, Comparator>::clear head_ %p", head_);
+	for(size_t i = 0; i < count_; i++) {
+		//LOGFMTI("SkipList<Key, Comparator>::clear node %p", node->next(0));
+		next = node->next(0);
+		slab_->free((void*)node->next(0));
+		node = next;
+	}
+	
+    //head_ = newNode(Key(), kMaxHeight);
 
     for (int i = 0; i < kMaxHeight; i++)
         head_->setNext(i, NULL);

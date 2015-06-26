@@ -23,6 +23,7 @@ public:
     Slab();
     ~Slab();
     bool init(uint32_t slabSize);
+	bool clear();
     void* alloc(uint32_t size);
     void* allocLocked(uint32_t size);
 	Page* allocPages(uint32_t pages);

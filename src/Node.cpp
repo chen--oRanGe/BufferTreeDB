@@ -64,7 +64,7 @@ bool Node::get(const Slice& key, Slice& value, Node* parent)
     assert(node);
 
     bool exists = node->get(key, value, this);
-    node->decRef();
+    //node->decRef();
 
     return exists;
 }
@@ -90,7 +90,9 @@ bool Node::write(const Msg& msg)
         return tree_->root_->write(msg);
     }
 
-    insertMsg(findPivot(msg.key()), msg);
+	size_t idx = findPivot(msg.key());
+	LOGFMTA("Node::write findPivot indx [%lu]", idx);
+    insertMsg(idx, msg);
     setDirty(true);
 
     pushDownOrSplit();
@@ -100,10 +102,11 @@ bool Node::write(const Msg& msg)
 void Node::pushDownOrSplit()
 {
     int index = -1;
-    // 查找Pivot是否需要分裂
+    // find which Pivot need to split
     for(size_t i = 0; i < pivots_.size(); ++i) {
 		// > 16*1024
-        if(pivots_[i].buf->count() > tree_->opts_.maxNodeMsg) {
+		LOGFMTI("Node::pushDownOrSplit [%lu,     %lu]", i, pivots_[i].buf->size());
+        if(pivots_[i].buf->size() > tree_->opts_.maxNodeMsg) {
             index = i;
             break;
         }
@@ -113,13 +116,13 @@ void Node::pushDownOrSplit()
         return;
     }
     if(pivots_[index].childNid != NID_NIL) {
-        // 有子节点，则把数据全部写入了节点
+        // if have child, flush data to the childs.
         MsgBuf* buf = pivots_[index].buf;
         Node* node = tree_->getNode(pivots_[index].childNid);
         node->pushDown(buf, this);
-        node->decRef();
+        //node->decRef();
     } else {
-        // 无子节点，则分裂Pivot
+        // if no child, split the Pivot.
         splitBuf(pivots_[index].buf);
     }
 
@@ -141,13 +144,15 @@ void Node::splitBuf(MsgBuf* buf)
     assert(isLeaf_);
 
     // if pivot bigger than 16K
-    if(buf->count() <= tree_->opts_.maxNodeMsg) {
+    if(buf->size() <= tree_->opts_.maxNodeMsg) {
         writeUnlock();
         return;
     }
 
+	LOGFMTI("############# Node::splitBuf ############ ");
+
     MsgBuf* buf0 = buf;
-    MsgBuf* buf1 = new MsgBuf(tree_->opts_.cmp, slab_);
+    MsgBuf* buf1 = new MsgBuf(slab_);
 
     buf0->lock();
 
@@ -180,8 +185,11 @@ void Node::splitBuf(MsgBuf* buf)
     setDirty(true);
     writeUnlock();
 
+	// lock the nodes from root to leaf.
     std::vector<Node*> lockedPath;
     tree_->lockPath(msg.key(), lockedPath);
+
+	LOGFMTI("Node::splitBuf lockedPath size: %lu", lockedPath.size());
 
     if(!lockedPath.empty()) {
         Node* node = lockedPath.back();
@@ -196,14 +204,15 @@ void Node::addPivot(nid_t child, MsgBuf* buf, Slice key)
         assert(buf == NULL);
         assert(pivots_.size() == 0);
 
-        buf = new MsgBuf(tree_->opts_.cmp, slab_);
+        buf = new MsgBuf(slab_);
         pivots_.push_back(Pivot(child, buf, key));
     } else {
         assert(pivots_.size());
         if(buf == NULL) {
-            buf = new MsgBuf(tree_->opts_.cmp, slab_);
+            buf = new MsgBuf(slab_);
         }
         size_t idx = findPivot(key);
+		LOGFMTI("Node::addPivot findPivot indx [%lu]", idx);
         // FIXME
         pivots_.insert(pivots_.begin() + idx + 1, Pivot(child, buf, key));
     }
@@ -213,16 +222,20 @@ void Node::addPivot(nid_t child, MsgBuf* buf, Slice key)
 
 size_t Node::findPivot(const Slice& key)
 {
-	if(pivots_.size() == 0)
+	size_t pivots = pivots_.size();
+	if(pivots == 0)
 		return 0;
 	size_t pivot = 0;
-	Comparator* cmp = tree_->opts_.cmp;
 
-	for(size_t i = 0; i < pivots_.size(); i++) {
-		if(cmp->compare(key, pivots_[i].leftKey) < 0)
+	for(size_t i = 0; i < pivots; i++) {
+		LOGFMTA("Node::findPivot indx [%s,    %s]", std::string(key.data(), key.size()).c_str(), 
+			std::string(pivots_[i].leftKey.data(), pivots_[i].leftKey.size()).c_str());
+		if(key.compare(pivots_[i].leftKey) < 0)
 			return pivot;
 		pivot++;
 	}
+	if(pivot > (pivots - 1))
+		return pivots - 1;
 	return pivot;
 }
 
@@ -231,6 +244,7 @@ void Node::lockPath(const Slice& key, std::vector<Node*>& path)
     path.push_back(this);
 
     size_t index = findPivot(key);
+	LOGFMTI("Node::lockPath findPivot index [%lu]", index);
 
     if(pivots_[index].childNid != NID_NIL) {
         Node* node = tree_->getNode(pivots_[index].childNid);
@@ -269,10 +283,8 @@ void Node::pushDownLocked(MsgBuf* buf, Node* parent)
     slow.seekToFirst();
     fast.seekToFirst();
 
-    Comparator* cmp = tree_->opts_.cmp;
-
     while(fast.valid() && idx < pivots_.size()) {
-        if(cmp->compare(fast.key().key(), pivots_[idx].leftKey) < 0) {
+		if(fast.key().key().compare(pivots_[idx].leftKey) < 0) {
             j++;
             fast.next();
         } else {
@@ -305,12 +317,14 @@ void Node::splitNode(std::vector<Node*>& path)
         while(!path.empty()) {
             Node* node = path.back();
             node->writeUnlock();
-            node->decRef();
+            //node->decRef();
             path.pop_back();
         }
         return;
     }
 
+	LOGFMTI("############# Node::splitNode ############ ");
+	
     size_t middle = pivots_.size() / 2;
     Slice middleKey = pivots_[middle].leftKey;
 
@@ -322,7 +336,7 @@ void Node::splitNode(std::vector<Node*>& path)
 
     node->pivots_.insert(node->pivots_.begin(), first, last);
     node->setDirty(true);
-    node->decRef();
+    //node->decRef();
 
     pivots_.resize(middle);
     setDirty(true);
@@ -341,17 +355,19 @@ void Node::splitNode(std::vector<Node*>& path)
     }
 
     writeUnlock();
-    decRef();
+    //decRef();
 }
 
 size_t Node::size()
 {
     MutexLockGuard lock(pivotsMutex_);
-    size_t usage = sizeof(Node);
+    //size_t usage = sizeof(Node);
+    size_t usage = 0;
     for(size_t i = 0; i < pivots_.size(); ++i)
-        usage += pivots_[i].buf->memUsage() + pivots_[i].buf->size();
+        usage += pivots_[i].buf->size();
 
-    return usage + pivots_.size() * sizeof(Pivot);
+    //return usage + pivots_.size() * sizeof(Pivot);
+    return usage;
 }
 
 void Node::setDirty(bool dirty)
@@ -380,14 +396,14 @@ size_t Node::writeBackSize()
 {
     size_t size = 0;
 
-    size += 8;
-    size += 1;
-    size += 4;
+    size += sizeof(isLeaf_);
+    size += sizeof(self_);
+    size += 4; // pivots_.size()
 
     for(size_t i = 0; i < pivots_.size(); ++i) {
-        size += 8;
-        size += 4 + pivots_[i].leftKey.size();
-        size += pivots_[i].buf->size();
+        size += sizeof(nid_t); // childNid
+        size += 4 + pivots_[i].leftKey.size(); // leftKey
+        size += pivots_[i].buf->size(); // buf size
     }
 
     return size;
@@ -448,6 +464,7 @@ bool Node::serialize(Buffer& writer)
 
 	for(size_t i = 0; i < pivots; ++i) {
 		writer.appendInt32(pivots_[i].childNid);
+		writer.appendInt32(pivots_[i].leftKey.size());
 		writer.append(pivots_[i].leftKey.data(), pivots_[i].leftKey.size());
 		pivots_[i].buf->serialize(writer);
 	}
@@ -471,7 +488,7 @@ bool Node::deserialize(Buffer& reader)
 		child = reader.readInt32();
 		std::string readStr(reader.readString());
 		Slice leftKey(readStr);
-		buf = new MsgBuf(tree_->opts_.cmp, slab_);
+		buf = new MsgBuf(slab_);
 		buf->deserialize(reader);
 		pivots_.push_back(Pivot(child, buf, leftKey));
 	}

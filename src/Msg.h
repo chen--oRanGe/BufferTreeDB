@@ -15,7 +15,6 @@ enum MsgType {
     Del,
 };
 
-class Comparator;
 class Slab;
 
 class Msg
@@ -32,10 +31,10 @@ public:
     size_t size() const
     {
         size_t size = 0;
-        size += 1;
-        size += sizeof(Slice) + key_.size();
+        size += 4;
+        size += key_.size();
         if(type_ == Put)
-            size += sizeof(Slice) + value_.size();
+            size += value_.size();
         return size;
     }
 
@@ -59,17 +58,10 @@ private:
 class Compare
 {
 public:
-    Compare(Comparator* cmp)
-        : cmp_(cmp)
-    {}
-
     int operator()(const Msg& a, const Msg& b) const
     {
-        //return cmp_->compare(a.key(), b.key());
-        return 0;
+        return a.key().compare(b.key());
     }
-private:
-    Comparator* cmp_;
 };
 
 class MsgBuf
@@ -78,7 +70,7 @@ public:
     typedef SkipList<Msg, Compare> List;
     typedef List::Iterator Iterator;
 
-    MsgBuf(Comparator* cmp, Slab* slab);
+    MsgBuf(Slab* slab);
     ~MsgBuf();
 
     size_t count();
@@ -96,9 +88,8 @@ public:
 
     List* skiplist() { return &list_; }
 private:
-    List list_;
 	Slab* slab_;
-    Comparator* cmp_;
+    List list_;	
     MutexLock mutex_;
     size_t size_;
 };

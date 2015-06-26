@@ -1,6 +1,7 @@
 set(base_SRCS
     RWLock.cpp
     Thread.cpp
+    Logger.cpp
     )
 
 add_library(BufferTreeDBBase ${base_SRCS})

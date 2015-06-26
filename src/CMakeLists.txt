@@ -8,7 +8,7 @@ set(BufferTreeDB_SRCS
     Slab.cpp
     )
 
-add_library(BufferTreeDB ${BufferTreeDB_SRCS})
+add_library(BufferTreeDB SHARED ${BufferTreeDB_SRCS})
 target_link_libraries(BufferTreeDB BufferTreeDBBase)
 
 install(TARGETS BufferTreeDB DESTINATION lib)

@@ -10,8 +10,6 @@
 
 using namespace bt;
 
-#define NODE_SIZE sizeof(Node)
-
 Layout::Layout(std::string& name)
     : name_(name),
       curDataId_(0),
@@ -21,13 +19,15 @@ Layout::Layout(std::string& name)
       curMetaFd_(-1),
       curPath_(DATA_PATH),
       metaPath_(META_PATH),
-      metadata_(),
-      readBuf_(),
+      metadata_(1024),
       writeBuf_(),
       tree_(NULL)
 {
 	curPath_ += name;
 	metaPath_ += name;
+	
+	// ensure hold 4 nodes(1M = 256K * 4).
+	writeBuf_.ensureWritableBytes(1024 * 1024 * 1024);
 }
 
 Layout::~Layout()
@@ -46,14 +46,14 @@ bool Layout::init()
         if(!loadMetadata(10))
             return false;
     } else {
-		curPath_ = curPath_ + "-" + std::string(1, '0');
-        curFd_ = open(curPath_.data(), O_RDWR | O_LARGEFILE);
+		curPath_ = curPath_ + "_" + std::string(1, '0');
+        curFd_ = open(curPath_.data(), O_RDWR | O_LARGEFILE | O_CREAT);
         if(curFd_ < 0) {
 			LOGFMTA("Layout::init open curfd error [%d]", curFd_);
 			return false;
 		}
 
-		curMetaFd_ = open(metaPath_.data(), O_RDWR | O_LARGEFILE);
+		curMetaFd_ = open(metaPath_.data(), O_RDWR | O_LARGEFILE | O_CREAT);
         if(curMetaFd_ < 0) {
 			LOGFMTA("Layout::init open curMetaFd_ error [%d]", curMetaFd_);
 			return false;
@@ -67,23 +67,25 @@ bool Layout::init()
 bool Layout::loadMetadata(size_t len)
 {
     //结合系统缓存实现元数据信息的持久化
-    Buffer buf;
-    readFile(metaPath_, 0, 16, buf);
+	writeBuf_.retrieveAll();
+    readFile(metaPath_, 0, 16, writeBuf_);
 
-    int magic = buf.readInt32();
+    int magic = writeBuf_.readInt32();
     if(magic != MAGIC) {
         return false;
     }
 
-    rootNodeId_ = buf.readInt32();
-    maxNodeId_ = buf.readInt32();
-    curDataId_ = buf.readInt32();
+    rootNodeId_ = writeBuf_.readInt32();
+    maxNodeId_ = writeBuf_.readInt32();
+    curDataId_ = writeBuf_.readInt32();
 
     Postion nodePos;
+	readFile(metaPath_, HEADER, maxNodeId_ * POSTION_SIZE, writeBuf_);
+	
     for(size_t i = 0; i < maxNodeId_; ++i) {
-        nodePos.dataId = buf.readInt8();
-        nodePos.offset = buf.readInt32();
-        nodePos.size = buf.readInt32();
+        nodePos.dataId = writeBuf_.readInt8();
+        nodePos.offset = writeBuf_.readInt32();
+        nodePos.size = writeBuf_.readInt32();
         metadata_.push_back(nodePos);
     }
 
@@ -94,19 +96,21 @@ bool Layout::loadMetadata(size_t len)
 
 bool Layout::flushMetadata()
 {
-    Buffer buf;
-    buf.appendInt32(MAGIC);
-    buf.appendInt32(rootNodeId_);
-    buf.appendInt32(maxNodeId_);
-    buf.appendInt32(curDataId_);
+	writeBuf_.retrieveAll();
+    writeBuf_.appendInt32(MAGIC);
+    writeBuf_.appendInt32(rootNodeId_);
+    writeBuf_.appendInt32(maxNodeId_);
+    writeBuf_.appendInt32(curDataId_);
+
+	writeFile(metaPath_, 0, 16, writeBuf_);
 
     for(size_t i = 0; i < metadata_.size(); ++i) {
-        buf.appendInt8(metadata_[i].dataId);
-        buf.appendInt32(metadata_[i].offset);
-        buf.appendInt32(metadata_[i].size);
+        writeBuf_.appendInt8(metadata_[i].dataId);
+        writeBuf_.appendInt32(metadata_[i].offset);
+        writeBuf_.appendInt32(metadata_[i].size);
     }
 
-    writeFile(metaPath_, 0, 16 + metadata_.size() * 9, buf);
+    writeFile(metaPath_, HEADER, metadata_.size() * POSTION_SIZE, writeBuf_);
 
 	return true;
 }
@@ -133,77 +137,76 @@ bool Layout::find(nid_t nid, Buffer& buf)
 {
     // 从元数据中找到结点位置信息
     Postion nodePos = metadata_[nid];
-	
-    std::string path = curPath_ + "-" + std::string(1, (nodePos.dataId + '0'));
+
+    std::string path = DATA_PATH + name_ + "_" + std::string(1, (nodePos.dataId + '0'));
     LOGFMTI("Layout::find path: %s", path.c_str());
 	
     readFile(path, nodePos.offset, nodePos.size, buf);
-
-    //char* p = (char*)slab_->alloc(readBuf_.size());
-    //char* p = (char*)slab_->alloc(10);
-	//assert(tree_);
-    //Node* node = new (p) Node(tree_, nid, slab_);
-
-    //node->deserialize(readBuf_);
 
     return true;
 }
 
 // FIXME sort the nodes??
-int Layout::write(std::vector<Node*>& nodes)
+int Layout::write(std::map<nid_t, Node*>& dirtyNodes)
 {
-    size_t i = 0, j = 0;
+
+	Node* node;
 	nid_t nid;
 	size_t offset;
-    bool merged = false;
-    std::map<nid_t, Postion> posMap;
     size_t size = 0;
-    for(i = 0; i < nodes.size(); ++i) {
-        // 序列化Node
-
-        size = 0;
-        merged = false;
-        posMap.clear();
-
-        nid = nodes[i]->nid();
-        offset = nid * POSTION_SIZE + HEADER;
-        nodes[i]->serialize(writeBuf_);
-        
-        Postion nodePos(curDataId_, offset, nodes[i]->size());
-        posMap[nid] = nodePos;
-        size += nodes[i]->size();
+	writeBuf_.retrieveAll();
 
 
-        for(j = i + 1; j < nodes.size(); ++j) {
-            if(nodes[j]->nid() - nodes[i]->nid() == (j - i)) {
-                // 序列化Node
-				// if node is close, we can write together
-                //nodes[j]->serialize(writeBuf_ + (j - i) * NODE_SIZE);
-                nodes[i]->serialize(writeBuf_);
-                nid = nodes[j]->nid();
-                Postion nodePos(curDataId_, nid * POSTION_SIZE + HEADER, nodes[j]->size());
-                posMap[nid] = nodePos;
-                size += nodes[i]->size();
-                merged = true;
-            } else {
-                break;
-            }
-        }
-        // 写入磁盘
-        LOGFMTI("Layout::write offset, size: (%d, %d)", offset, size);
+	std::map<nid_t, Node*>::iterator it0, itEnd = dirtyNodes.end();
+
+	/*
+	for(it0 = dirtyNodes.begin(); it0 != itEnd;) {
+		Node* node = it0->second;
+		nid = it0->first;
+		n = 1;
+		while((nid + n == it1->first) && n < 4 && it1 != itEnd) {
+			n++;
+			++it1;
+		}
+		
+		LOGFMTI("Layout::write find continuous nodes [%lu])", n);
+
+		// serialize nodes
+		while(it0 != it1) {
+			node = it0->second;
+			nid = it0->first;
+			offset = nid * POSTION_SIZE + HEADER;
+			node->readLock();
+			node->serialize(writeBuf_);
+			node->readUnlock();
+			++it0;
+		}
+		
+        LOGFMTI("Layout::write offset, size: (%lu, %lu)", offset, size);
         writeFile(curPath_, offset, size, writeBuf_);
 
-		// update metadata
-        for(std::map<nid_t, Postion>::iterator it = posMap.begin(); it != posMap.end(); ++it) {
-            metadata_[it->first] = it->second;
-        }
+		
 
-        if(merged) {
-            i = j;
-        }
-    }
+	}*/
 
+	for(it0 = dirtyNodes.begin(); it0 != itEnd; ++it0) {
+		node = it0->second;
+		nid = it0->first;
+		node->readLock();
+		node->serialize(writeBuf_);
+		node->readUnlock();
 
+		offset = nid * (256 * 1024);
+		size = writeBuf_.readableBytes();
+		LOGFMTI("Layout::write offset, size: (%lu, %lu)", offset, size);
+		writeFile(curPath_, offset, size, writeBuf_);
+
+		//update the metadata
+		if(nid > metadata_.size()) {
+			metadata_.push_back(Postion(curDataId_, offset, size));
+		} else 
+			metadata_[nid] = Postion(curDataId_, offset, size);
+	}
 
 	return 0;
 }
@@ -212,7 +215,7 @@ bool Layout::readFile(std::string& path, uint32_t offset, uint32_t size, Buffer&
 {
     if(path != curPath_) {
         close(curFd_);
-		curFd_ = open(path.data(), O_RDWR | O_LARGEFILE);
+		curFd_ = open(path.data(), O_RDWR | O_LARGEFILE | O_CREAT);
         if(curFd_ < 0) {
 			LOGFMTA("Layout::readFile open curfd error [%d]", curFd_);
 			return false;
@@ -226,7 +229,7 @@ bool Layout::readFile(std::string& path, uint32_t offset, uint32_t size, Buffer&
 		return false;
 	}
 
-	data.updateWriterIndex(ret);
+	data.updateWriterIndex(size);
 
 	return true;
 }
@@ -236,7 +239,7 @@ bool Layout::writeFile(std::string& path, uint32_t offset, uint32_t size, Buffer
 {
     if(path != curPath_) {
         close(curFd_);
-		curFd_ = open(path.data(), O_RDWR | O_LARGEFILE);
+		curFd_ = open(path.data(), O_RDWR | O_LARGEFILE | O_CREAT);
         if(curFd_ < 0) {
 			LOGFMTA("Layout::readFile open curfd error [%d]", curFd_);
 			return false;
@@ -244,13 +247,13 @@ bool Layout::writeFile(std::string& path, uint32_t offset, uint32_t size, Buffer
         curPath_ = path;
     }
 
-    int ret = pwrite(curFd_, data.getReaderAddr(), size, offset);
+    int ret = pwrite(curFd_, data.beginRead(), size, offset);
 	if(ret != (int)size) {
 		LOGFMTA("Layout::readFile error [%d]", ret);
 		return false;
 	}
 
-	// error??
+	data.updateReadIndex(size);
 	
 	return true;
 }

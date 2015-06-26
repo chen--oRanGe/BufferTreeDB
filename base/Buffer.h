@@ -114,6 +114,7 @@ public:
 
 	void appendString(std::string& str)
 	{
+		appendInt32(str.size());
 		append(str.data(), str.size());
 	}
 
@@ -127,11 +128,6 @@ public:
 
 	char* beginWrite()
 	{ return begin() + writerIndex_; }
-
-/*
-	const char* beginWrite()
-	{ return begin() + writerIndex_; }
-*/
 
 	void hasWritten(size_t len)
 	{ writerIndex_ += len; }
@@ -228,9 +224,14 @@ public:
 		writerIndex_ += n;
 	}
 
-	char* getReaderAddr()
+	char* beginRead()
 	{
 		return begin() + readerIndex_;
+	}
+
+	void updateReadIndex(size_t n)
+	{
+		retrieve(n);
 	}
 
 private:
